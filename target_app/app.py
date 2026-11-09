@@ -1,261 +1,141 @@
-import os
-import sqlite3
+import hashlib
+import hmac
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from sqlalchemy import select, text
+from sqlalchemy.orm import Session
 
-# Paths
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "app.db")
-ACCESS_LOG = os.path.join(BASE_DIR, "access.log")
+from .database import Base, SessionLocal, engine, get_db
+from .models import Product, User
+from .schemas import LoginRequest, UserOut
 
-app = FastAPI(title="RedBlue Wargame — Vulnerable Target", version="0.1.0")
+LOG_PATH = Path(__file__).resolve().parent / "access.log"
+SALT = b"redblue-practice-salt"  # extra data mixed with password before hashed
+
+DbSession = Annotated[Session, Depends(get_db)]
 
 
-# --------------------------------------------------------------------------- #
-# Database (SQLite, seeded fresh on startup)
-# --------------------------------------------------------------------------- #
-def init_db() -> None:
-    """Create and seed a fresh SQLite database on every startup.
+def hash_password(password: str) -> str:
+    return hashlib.pbkdf2_hmac("sha256", password.encode(), SALT, 300_000).hex()
 
-    Passwords are stored in plaintext deliberately — this is an intentionally
-    insecure practice target, not a real auth system.
-    """
-    if os.path.exists(DB_PATH):
-        os.remove(DB_PATH)
 
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE users (
-            id       INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            is_admin INTEGER NOT NULL DEFAULT 0
+def seed_db() -> None:
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                User(
+                    username="admin",
+                    email="admin@redblue.local",
+                    role="admin",
+                    password_hash=hash_password("S3cure!Admin#2026"),
+                ),
+                User(
+                    username="manash",
+                    email="manash@redblue.local",
+                    password_hash=hash_password("manash-aoi-33"),
+                ),
+                User(
+                    username="prasam",
+                    email="prasam@redblue.local",
+                    password_hash=hash_password("prasam-the-gang"),
+                ),
+                Product(
+                    name="Wireless Mouse M240",
+                    description="Silent-click Bluetooth mouse with 18-month battery life",
+                ),
+                Product(
+                    name="Mechanical Keyboard K68",
+                    description="Compact 68-key keyboard with hot-swappable brown switches",
+                ),
+                Product(
+                    name="USB-C Hub 7-in-1",
+                    description="HDMI 4K, 3x USB-A, SD/microSD reader, 100W pass-through charging",
+                ),
+                Product(
+                    name="Noise Cancelling Headphones Q30",
+                    description="Over-ear ANC headphones with 40-hour playtime",
+                ),
+                Product(
+                    name="27-inch IPS Monitor",
+                    description="2560x1440 QHD display, 75Hz, adjustable stand",
+                ),
+                Product(
+                    name="Portable SSD 1TB",
+                    description="USB 3.2 external drive, up to 1050MB/s read speed",
+                ),
+            ]
         )
-        """)
-    cur.executemany(
-        "INSERT INTO users (username, password, is_admin) VALUES (?, ?, ?)",
-        [
-            ("alice", "s3cr3t-alice", 1),
-            ("bob", "hunter2", 0),
-            ("carol", "carol-pw-99", 0),
-        ],
-    )
-    cur.execute("""
-        CREATE TABLE products (
-            id    INTEGER PRIMARY KEY AUTOINCREMENT,
-            name  TEXT NOT NULL,
-            price REAL NOT NULL
-        )
-        """)
-    cur.executemany(
-        "INSERT INTO products (name, price) VALUES (?, ?)",
-        [
-            ("Widget", 9.99),
-            ("Gadget", 19.99),
-            ("Gizmo", 29.99),
-        ],
-    )
-    conn.commit()
-    conn.close()
+        db.commit()
 
 
-def get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    seed_db()
+    yield
 
 
-# In-memory session table: token -> username.
-# [VULN: session_hijack] Tokens are predictable and never expire — see /login.
-SESSIONS: dict[str, str] = {}
+app = FastAPI(title="RedBlue Target", lifespan=lifespan)
 
 
-# --------------------------------------------------------------------------- #
-# Access logging — the Blue Team Detector reads this file
-# --------------------------------------------------------------------------- #
 @app.middleware("http")
-async def access_log_middleware(request: Request, call_next):
-    """Append one line per request to access.log.
-
-    Format (space-separated, quoted request line):
-        2026-09-06T12:00:00Z 127.0.0.1 "GET /search?q=widget" 200 3ms
-    """
+async def access_log(request: Request, call_next):
     start = time.perf_counter()
-    response = await call_next(request)
-    elapsed_ms = int((time.perf_counter() - start) * 1000)
-
-    client = request.client.host if request.client else "-"
-    path = request.url.path
-    if request.url.query:
-        path = f"{path}?{request.url.query}"
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    line = f'{ts} {client} "{request.method} {path}" {response.status_code} {elapsed_ms}ms\n'
-
-    with open(ACCESS_LOG, "a", encoding="utf-8") as fh:
-        fh.write(line)
-
-    return response
-
-
-@app.on_event("startup")
-def _startup() -> None:
-    init_db()
-
-
-# --------------------------------------------------------------------------- #
-# Routes
-# --------------------------------------------------------------------------- #
-@app.get("/", response_class=HTMLResponse)
-def index() -> str:
-    return """
-    <h1>RedBlue Wargame — Target App</h1>
-    <p>Deliberately vulnerable practice target. Endpoints:</p>
-    <ul>
-      <li><code>GET  /admin</code></li>
-      <li><code>GET  /search?q=...</code></li>
-      <li><code>POST /login</code> (form: username, password)</li>
-      <li><code>GET  /account?token=...</code></li>
-    </ul>
-    """
-
-
-@app.get("/admin", response_class=HTMLResponse)
-def admin() -> str:
-    """
-    [VULN: admin_bypass]
-    This route performs NO authentication check. Anyone who requests /admin
-    gets the admin dashboard. A real fix would require an authenticated admin
-    session before returning this content.
-    """
-    conn = get_conn()
-    users = conn.execute("SELECT id, username, is_admin FROM users").fetchall()
-    conn.close()
-    rows = "".join(
-        f"<tr><td>{u['id']}</td><td>{u['username']}</td><td>{u['is_admin']}</td></tr>"
-        for u in users
-    )
-    return f"""
-    <h1>Admin Dashboard</h1>
-    <p>SECRET: internal admin panel — should never be reachable unauthenticated.</p>
-    <table border="1">
-      <tr><th>id</th><th>username</th><th>is_admin</th></tr>
-      {rows}
-    </table>
-    """
-
-
-@app.get("/search")
-def search(q: str = "") -> JSONResponse:
-    """
-    [VULN: sql_injection]
-    The query is built by raw string interpolation, so input like
-        ' UNION SELECT username, password FROM users --
-    is executed directly. A real fix would use a parameterized query
-    (e.g. "... WHERE name LIKE ?", (f"%{q}%",)).
-    """
-    conn = get_conn()
-    query = f"SELECT id, name, price FROM products WHERE name LIKE '%{q}%'"
+    status = 500
     try:
-        rows = conn.execute(query).fetchall()
-        results = [dict(r) for r in rows]
-        status = 200
-        payload = {"query": query, "results": results}
-    except Exception as exc:  # noqa: BLE001 — surfacing errors is part of the vuln
-        status = 500
-        payload = {"query": query, "error": str(exc)}
+        response = await call_next(request)
+        status = response.status_code
+        return response
     finally:
-        conn.close()
-    return JSONResponse(payload, status_code=status)
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        path = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+        client = request.client.host if request.client else "-"
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+        with LOG_PATH.open("a") as log:
+            log.write(
+                f"{timestamp} {client} {request.method} {path} {status} {elapsed_ms:.1f}ms\n"
+            )
+
+
+@app.get("/")
+def index():
+    return {"status": "ok"}
 
 
 @app.post("/login")
-async def login(request: Request, response: Response) -> JSONResponse:
-    """
-    Two planted vulnerabilities live here:
+def login(body: LoginRequest, db: DbSession):
+    user = db.scalar(select(User).where(User.username == body.username))
+    if user is None or not hmac.compare_digest(
+        hash_password(body.password), user.password_hash
+    ):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    return {"token": f"session-{user.id}"}
 
-    [VULN: timing_attack]
-    If the username does NOT exist we return immediately. If it DOES exist we
-    perform a (simulated) expensive password check with a deliberate delay.
-    The response-time gap lets an attacker enumerate valid usernames without
-    ever guessing a password. A real fix would spend constant time regardless
-    of whether the username exists.
 
-    [VULN: session_hijack]
-    On success we mint a predictable, non-expiring token of the form
-        session-<user_id>
-    Any attacker can guess another user's token (session-1, session-2, ...) and
-    replay it forever. A real fix would use a cryptographically random token
-    with an expiry.
-    """
-    form = await request.form()
-    username = str(form.get("username", ""))
-    password = str(form.get("password", ""))
-
-    conn = get_conn()
-    user = conn.execute(
-        "SELECT * FROM users WHERE username = ?", (username,)
-    ).fetchone()
-
-    # [VULN: timing_attack] — fast path for unknown users, slow path for known.
+@app.get("/account", response_model=UserOut)
+def account(db: DbSession, authorization: Annotated[str | None, Header()] = None):
+    token = (authorization or "").removeprefix("Bearer ")
+    user_id = token.removeprefix("session-")
+    if not token.startswith("session-") or not user_id.isdigit():
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    user = db.get(User, int(user_id))
     if user is None:
-        conn.close()
-        return JSONResponse(
-            {"ok": False, "error": "invalid credentials"}, status_code=401
-        )
-
-    # Simulated expensive password verification (only reached for real users).
-    time.sleep(0.4)
-    if password != user["password"]:
-        conn.close()
-        return JSONResponse(
-            {"ok": False, "error": "invalid credentials"}, status_code=401
-        )
-
-    # [VULN: session_hijack] — predictable, non-expiring token.
-    token = f"session-{user['id']}"
-    SESSIONS[token] = user["username"]
-    conn.close()
-
-    response.set_cookie("session", token)
-    return JSONResponse({"ok": True, "token": token, "user": user["username"]})
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user
 
 
-@app.get("/account")
-def account(token: str = "") -> JSONResponse:
-    """
-    [VULN: session_hijack]
-    Returns account info for whoever presents a session token. The server
-    TRUSTS the predictable token format `session-<id>`: it parses the id
-    straight out of the token instead of checking it against securely-issued,
-    server-side session state. So an attacker who has never logged in can guess
-    `session-1` and become alice. A real fix would accept only opaque random
-    tokens looked up in server-side session storage, with an expiry.
-    """
-    user_id = None
-    if token.startswith("session-"):
-        suffix = token[len("session-") :]
-        if suffix.isdigit():
-            user_id = int(suffix)
-
-    if user_id is None:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-
-    conn = get_conn()
-    user = conn.execute(
-        "SELECT id, username, is_admin FROM users WHERE id = ?", (user_id,)
-    ).fetchone()
-    conn.close()
-
-    if user is None:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    return JSONResponse({"account": dict(user)})
+@app.get("/search")
+def search(db: DbSession, q: str = ""):
+    query = text(f"SELECT id, name, description FROM products WHERE name LIKE '%{q}%'")
+    return [dict(row) for row in db.execute(query).mappings()]
 
 
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+@app.get("/admin", response_model=list[UserOut])
+def admin(db: DbSession):
+    return db.scalars(select(User)).all()
