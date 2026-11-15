@@ -11,7 +11,7 @@ from agents.blue_team import build_blue_swarm
 from agents.red_team import build_red_swarm
 from agents.tools import LOG_PATH
 
-BASE_URL = "http://localhost:8000"
+BASE_URL = "http://localhost:8001"
 MAX_ROUNDS = 30
 TIME_BUDGET_SECONDS = 600  # ~10 minutes
 

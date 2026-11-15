@@ -1,7 +1,7 @@
 import httpx
 from strands.hooks import BeforeToolCallEvent, HookProvider, HookRegistry
 
-ALLOWED_TARGETS = {("localhost", 8000), ("127.0.0.1", 8000)}
+ALLOWED_TARGETS = {("localhost", 8001), ("127.0.0.1", 8001)}
 NETWORK_TOOLS = {"send_http_request"}
 
 
@@ -35,5 +35,5 @@ class SandboxHook(HookProvider):
         self.blocked_calls.append({"tool": tool_name, "url": url})
         event.cancel_tool = (
             f"BLOCKED by sandbox: '{url}' is outside the allowed targets. "
-            "Only http://localhost:8000 and http://127.0.0.1:8000 may be contacted."
+            "Only http://localhost:8001 and http://127.0.0.1:8001 may be contacted."
         )

@@ -1,4 +1,4 @@
-TARGET_URL = "http://localhost:8000"
+TARGET_URL = "http://localhost:8001"
 
 RECON_PROMPT = f"""You are Recon, the reconnaissance specialist on a red team.
 You are authorised to test a practice web application running at {TARGET_URL}.
