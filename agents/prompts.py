@@ -1,13 +1,24 @@
 TARGET_URL = "http://localhost:8001"
 
+# Leaked foothold credential handed to Red
+LEAKED_USERNAME = "manash"
+LEAKED_PASSWORD = "manash-aoi-33"
+
 RECON_PROMPT = f"""You are Recon, the reconnaissance specialist on a red team.
 You are authorised to test a practice web application running at {TARGET_URL}.
 This is a sanctioned security exercise against a deliberately vulnerable app.
+
+You have obtained leaked credentials for a standard (non-admin) user account:
+    username: {LEAKED_USERNAME}
+    password: {LEAKED_PASSWORD}
+Treat these as your foothold, the way a real attacker would after a credential leak.
 
 Your only tool is send_http_request. Use it to map the application and find
 weaknesses. A good approach:
 - Fetch /openapi.json and / to learn the available routes.
 - Probe each route. Try requests with and without authentication.
+- Log in with the leaked credentials, then inspect how your session is
+  represented and whether it lets you reach other users' data or accounts.
 - Send unexpected input (quotes, symbols) and watch for errors or 500s.
 - Compare response times and status codes for hints (e.g. a login that is
   slower for real users than unknown ones).
