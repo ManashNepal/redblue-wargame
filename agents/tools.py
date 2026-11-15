@@ -130,7 +130,19 @@ def edit_target_file(filename: str, old_text: str, new_text: str) -> str:
     if count > 1:
         return f"Error: old_text appears {count} times. Include more surrounding lines so it is unique."
 
-    path.write_text(source.replace(old_text, new_text, 1), encoding="utf-8")
+    patched = source.replace(old_text, new_text, 1)
+
+    # Reject edits that would break Python syntax, so the target app stays runnable.
+    try:
+        compile(patched, str(path), "exec")
+    except SyntaxError as exc:
+        return (
+            f"Error: the edit was NOT applied because it would break {filename} "
+            f"({exc.msg} at line {exc.lineno}). The file is unchanged. "
+            "Re-read the file and submit a corrected edit."
+        )
+
+    path.write_text(patched, encoding="utf-8")
     return (
         f"Edited {filename}: replaced {len(old_text)} chars with {len(new_text)} chars."
     )
