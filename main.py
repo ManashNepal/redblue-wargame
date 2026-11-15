@@ -17,6 +17,7 @@ STOP_REASON_TEXT = {
     "all_patched": "All vulnerabilities patched",
     "max_rounds": "Reached the round limit",
     "timeout": "Hit the time budget",
+    "incomplete": "Round did not finish — scored the app as-is",
 }
 
 
@@ -61,7 +62,7 @@ def render_summary(result) -> None:
         else:
             table.add_row(vuln.id, "[red]OPEN[/red]")
 
-    reason = STOP_REASON_TEXT.get(result.stop_reason, str(result.stop_reason))
+    reason = STOP_REASON_TEXT.get(result.stop_reason) or "Did not finish a scored round"
     console.print()
     console.print(
         Panel(

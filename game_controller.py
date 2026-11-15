@@ -213,10 +213,21 @@ def run_game(
     # Hard safety backstops
     builder.set_max_node_executions(3 * max_rounds + 3)
     builder.set_execution_timeout(time_budget_s * 2 + 300)
-    builder.set_node_timeout(600)
+    builder.set_node_timeout(660)  # above the blue swarm's own execution_timeout
 
     graph = builder.build()
     graph(GAME_TASK)
+
+    # If the graph ended before the scorer ran even once, score the live app once
+    if score.round_number == 0:
+        patched = score_round(base_url)
+        return GameResult(
+            stop_reason="incomplete",
+            rounds=0,
+            patched=sorted(patched),
+            total=len(KNOWN_VULNERABILITIES),
+            events=score.round_events,
+        )
 
     return GameResult(
         stop_reason=score.stop_reason,

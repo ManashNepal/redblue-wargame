@@ -56,6 +56,6 @@ def build_blue_swarm() -> Swarm:
         hooks=[SandboxHook()],
         max_handoffs=8,
         max_iterations=30,
-        execution_timeout=420.0,
-        node_timeout=180.0,
+        execution_timeout=600.0,
+        node_timeout=300.0,
     )

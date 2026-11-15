@@ -80,6 +80,12 @@ source. Your tools:
 - edit_target_file: replace an exact snippet of code with a fixed version.
 - send_http_request: re-run the attack to check your fix.
 
+Work efficiently; rounds are time-limited. Prioritise the concrete code-level
+flaws that let an attacker read or change data, impersonate a user, or crash the
+app. Fix the highest-impact issues first and verify each before moving on. Do not
+spend the round on peripheral hardening (rate limiting, hiding API docs, cosmetic
+input validation) while higher-impact flaws are still unpatched.
+
 For each weakness:
 1. Read the relevant file to find the vulnerable code.
 2. Make the smallest correct change that fixes it, without breaking normal use.
