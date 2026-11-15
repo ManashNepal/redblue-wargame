@@ -12,8 +12,8 @@ from agents.red_team import build_red_swarm
 from agents.tools import LOG_PATH
 
 BASE_URL = "http://localhost:8001"
-MAX_ROUNDS = 30
-TIME_BUDGET_SECONDS = 600  # ~10 minutes
+MAX_ROUNDS = 3
+TIME_BUDGET_SECONDS = 300  # 5 minutes
 
 GAME_TASK = (
     "Begin the security engagement against the target application. "
